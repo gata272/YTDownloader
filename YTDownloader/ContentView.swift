@@ -1,0 +1,188 @@
+import SwiftUI
+import UIKit
+
+struct DownloadOption: Identifiable {
+    let id = UUID()
+    let label: String
+    let detail: String
+    let video: YTFormat
+    let audio: YTFormat?
+    let audioOnly: Bool
+}
+
+struct ContentView: View {
+    @State private var urlText = ""
+    @State private var info: VideoInfo? = nil
+    @State private var options: [DownloadOption] = []
+    @State private var status = ""
+    @State private var isError = false
+    @State private var isBusy = false
+    @State private var progress: Double? = nil
+    @State private var resultFile: URL? = nil
+    @State private var resultIsAudio = false
+    @State private var savedNote = ""
+
+    private let downloader = DownloadManager()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("YouTubeのリンク") {
+                    TextField("https://www.youtube.com/watch?v=…", text: $urlText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    HStack {
+                        Button("貼り付け") {
+                            if let s = UIPasteboard.general.string { urlText = s }
+                        }
+                        Spacer()
+                        Button("取得") { Task { await fetch() } }
+                            .disabled(isBusy || urlText.isEmpty)
+                    }
+                }
+
+                if let info {
+                    Section("動画") {
+                        Text(info.title).font(.headline)
+                        Text("取得方式: \(info.clientName)").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Section("ダウンロード形式") {
+                        ForEach(options) { opt in
+                            Button {
+                                Task { await runDownload(opt) }
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(opt.label)
+                                        Text(opt.detail).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "arrow.down.circle")
+                                }
+                            }
+                            .disabled(isBusy)
+                        }
+                    }
+                }
+
+                if let progress {
+                    Section("進捗") {
+                        ProgressView(value: progress)
+                        Text("\(Int(progress * 100))%").font(.caption)
+                    }
+                }
+
+                if let resultFile {
+                    Section("保存") {
+                        if !resultIsAudio {
+                            Button("写真アプリに保存") { Task { await savePhotos(resultFile, audio: false) } }
+                        } else {
+                            Button("写真アプリに保存（音声）") { Task { await savePhotos(resultFile, audio: true) } }
+                        }
+                        ShareLink(item: resultFile) {
+                            Text("共有（ファイルに保存など）")
+                        }
+                        if !savedNote.isEmpty {
+                            Text(savedNote).font(.caption).foregroundStyle(.green)
+                        }
+                    }
+                }
+
+                if !status.isEmpty {
+                    Section("状態") {
+                        Text(status).font(.footnote).foregroundStyle(isError ? .red : .primary)
+                    }
+                }
+            }
+            .navigationTitle("YTダウンローダ")
+        }
+    }
+
+    private func fetch() async {
+        guard let vid = Innertube.extractVideoID(from: urlText) else {
+            status = "YouTubeのリンクから動画IDを読み取れませんでした"
+            isError = true
+            return
+        }
+        isBusy = true
+        status = "取得中…"
+        isError = false
+        resultFile = nil
+        defer { isBusy = false }
+        do {
+            let v = try await Innertube.fetchInfo(videoID: vid)
+            info = v
+            options = buildOptions(v)
+            status = options.isEmpty ? "使える形式が見つかりませんでした" : ""
+            isError = options.isEmpty
+        } catch {
+            info = nil
+            options = []
+            status = error.localizedDescription
+            isError = true
+        }
+    }
+
+    private func buildOptions(_ v: VideoInfo) -> [DownloadOption] {
+        var out: [DownloadOption] = []
+        for f in v.muxed where f.mimeType.contains("mp4") {
+            out.append(DownloadOption(label: "\(f.qualityLabel) 動画", detail: "単一ファイル / mp4",
+                                      video: f, audio: nil, audioOnly: false))
+        }
+        if let bestV = v.videos.first(where: { $0.mimeType.contains("mp4") && $0.codecIsMP4Friendly }),
+           let bestA = v.audios.first(where: { $0.mimeType.contains("mp4") }) {
+            out.append(DownloadOption(label: "\(bestV.qualityLabel) 動画（高画質）", detail: "映像+音声を結合 / mp4",
+                                      video: bestV, audio: bestA, audioOnly: false))
+        }
+        if let a = v.audios.first {
+            let ext = a.mimeType.contains("mp4") ? "m4a" : "webm"
+            out.append(DownloadOption(label: "音声のみ", detail: "\(ext) / \(a.bitrate / 1000)kbps",
+                                      video: a, audio: nil, audioOnly: true))
+        }
+        return out
+    }
+
+    private func runDownload(_ opt: DownloadOption) async {
+        guard let v = info else { return }
+        isBusy = true
+        progress = 0
+        status = "ダウンロード中…"
+        isError = false
+        defer { isBusy = false; progress = nil }
+        do {
+            let first = try await downloader.download(urlString: opt.video.url, userAgent: v.userAgent) { p in
+                Task { @MainActor in progress = p }
+            }
+            var final = first
+            if let audioFmt = opt.audio {
+                status = "音声をダウンロード中…"
+                let audioFile = try await downloader.download(urlString: audioFmt.url, userAgent: v.userAgent) { p in
+                    Task { @MainActor in progress = p }
+                }
+                status = "結合中…"
+                final = try await MediaTools.mux(video: first, audio: audioFile)
+            }
+            if opt.audioOnly, !opt.video.mimeType.contains("mp4") {
+                // webm音声はそのままでは写真に保存できないため共有のみ
+                status = "ダウンロード完了（webm音声のため共有から保存してください）"
+            } else {
+                status = "ダウンロード完了"
+            }
+            resultIsAudio = opt.audioOnly
+            resultFile = final
+            savedNote = ""
+        } catch {
+            status = error.localizedDescription
+            isError = true
+        }
+    }
+
+    private func savePhotos(_ file: URL, audio: Bool) async {
+        let ok = audio ? await MediaTools.saveAudioToPhotos(file) : await MediaTools.saveToPhotos(file)
+        savedNote = ok ? "写真アプリに保存しました" : ""
+        if !ok {
+            status = "写真への保存に失敗しました（権限を確認してください）"
+            isError = true
+        }
+    }
+}
