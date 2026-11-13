@@ -209,7 +209,7 @@ struct ContentView: View {
             savedNote = ""
         } catch {
             let msg = error.localizedDescription
-            if msg.contains("403"), triedClients.count < 4 {
+            if msg.contains("403"), triedClients.count < Innertube.totalClients {
                 // 403はクライアント方式との相性が原因のことが多いので、別の方式で取り直す
                 status = "方式 \(v.clientName) では403でした。別の方式で取り直します…"
                 isError = false

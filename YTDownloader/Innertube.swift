@@ -33,10 +33,11 @@ struct YTError: LocalizedError {
 
 private struct ClientProfile {
     let name: String
-    let clientNameHeader: String   // X-YouTube-Client-Name 数値ID
+    let clientNameHeader: String   // X-YouTube-Client-Name 数値ID（不明な場合は空＝ヘッダを付けない）
     let apiKey: String
     let userAgent: String
     let client: [String: Any]
+    var embed: Bool = false        // true なら context.thirdParty.embedUrl を付ける（埋め込みプレイヤー系）
 }
 
 enum Innertube {
@@ -58,7 +59,43 @@ enum Innertube {
         return nil
     }
 
+    static var totalClients: Int { clients.count }
+
+    private static var cachedVisitorData: String? = nil
+
+    /// yt-dlp と同様に、まず visitor_id API でゲストセッションID（visitorData）を取得する。
+    /// これを付けると要求が「通常の視聴セッション」に見え、bot判定を回避しやすくなる。
+    private static func visitorData() async -> String {
+        if let v = cachedVisitorData { return v }
+        guard let url = URL(string: "https://www.youtube.com/youtubei/v1/visitor_id?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false") else { return "" }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        let body: [String: Any] = ["context": ["client": ["clientName": "WEB", "clientVersion": "2.20240111.09.00", "hl": "en", "gl": "US"]]]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let vd = json["visitorData"] as? String else { return "" }
+        cachedVisitorData = vd
+        return vd
+    }
+
     private static let clients: [ClientProfile] = [
+        ClientProfile(
+            name: "TV_SIMPLY", clientNameHeader: "",
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            userAgent: "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
+            client: ["clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER", "clientVersion": "2.0",
+                     "userAgent": "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version"],
+            embed: true),
+        ClientProfile(
+            name: "WEB_EMBEDDED", clientNameHeader: "",
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            client: ["clientName": "WEB_EMBEDDED_PLAYER", "clientVersion": "1.20250219.01.00",
+                     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"],
+            embed: true),
         ClientProfile(
             name: "ANDROID_VR", clientNameHeader: "28",
             apiKey: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
@@ -93,9 +130,10 @@ enum Innertube {
     static func fetchInfo(videoID: String, excluding: Set<String> = []) async throws -> VideoInfo {
         var lastError = "取得できませんでした"
         let cookie = await SessionManager.cookieHeader()
+        let vd = await visitorData()
         for profile in clients where !excluding.contains(profile.name) {
             do {
-                if let info = try await fetchInfo(videoID: videoID, profile: profile, cookie: cookie) {
+                if let info = try await fetchInfo(videoID: videoID, profile: profile, cookie: cookie, visitorData: vd) {
                     return info
                 }
             } catch let e as YTError {
@@ -109,25 +147,37 @@ enum Innertube {
         throw YTError(message: "全ての方式で取得に失敗しました（\(lastError)）。動画によっては制限されています。")
     }
 
-    private static func fetchInfo(videoID: String, profile: ClientProfile, cookie: String) async throws -> VideoInfo? {
+    private static func fetchInfo(videoID: String, profile: ClientProfile, cookie: String, visitorData vd: String) async throws -> VideoInfo? {
         guard let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(profile.apiKey)&prettyPrint=false") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(profile.userAgent, forHTTPHeaderField: "User-Agent")
-        req.setValue(profile.clientNameHeader, forHTTPHeaderField: "X-YouTube-Client-Name")
+        if !profile.clientNameHeader.isEmpty {
+            req.setValue(profile.clientNameHeader, forHTTPHeaderField: "X-YouTube-Client-Name")
+        }
+        if !vd.isEmpty {
+            req.setValue(vd, forHTTPHeaderField: "X-Goog-Visitor-Id")
+        }
         req.setValue(profile.client["clientVersion"] as? String, forHTTPHeaderField: "X-YouTube-Client-Version")
         if !cookie.isEmpty {
             req.setValue(cookie, forHTTPHeaderField: "Cookie")
             req.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         }
-        let body: [String: Any] = [
-            "context": ["client": profile.client],
+        var context: [String: Any] = ["client": profile.client]
+        if profile.embed {
+            context["thirdParty"] = ["embedUrl": "https://www.youtube.com/"]
+        }
+        var body: [String: Any] = [
+            "context": context,
             "videoId": videoID,
             "playbackContext": ["contentPlaybackContext": ["vis": 0, "splay": false, "lactMilliseconds": "-1"]],
             "racyCheckOk": true,
             "contentCheckOk": true,
         ]
+        if !vd.isEmpty {
+            body["visitorData"] = vd
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, _) = try await URLSession.shared.data(for: req)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
