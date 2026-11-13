@@ -125,9 +125,6 @@ struct ContentView: View {
             }) {
                 WebLoginView { showLogin = false }
             }
-            .task {
-                signedIn = await SessionManager.isSignedIn()
-            }
         }
     }
 
