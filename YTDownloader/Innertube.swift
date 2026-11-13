@@ -22,6 +22,8 @@ struct VideoInfo {
     let audios: [YTFormat]         // 音声のみ
     let clientName: String
     let userAgent: String
+    let clientNameHeader: String
+    let clientVersion: String
 }
 
 struct YTError: LocalizedError {
@@ -88,9 +90,9 @@ enum Innertube {
                      "userAgent": "com.google.android.youtube/19.47.53 (Linux; U; Android 14) gzip"]),
     ]
 
-    static func fetchInfo(videoID: String) async throws -> VideoInfo {
+    static func fetchInfo(videoID: String, excluding: Set<String> = []) async throws -> VideoInfo {
         var lastError = "取得できませんでした"
-        for profile in clients {
+        for profile in clients where !excluding.contains(profile.name) {
             do {
                 if let info = try await fetchInfo(videoID: videoID, profile: profile) {
                     return info
@@ -159,6 +161,8 @@ enum Innertube {
         return VideoInfo(title: title,
                          muxed: muxed.sorted { $0.height > $1.height },
                          videos: videos, audios: audios,
-                         clientName: profile.name, userAgent: profile.userAgent)
+                         clientName: profile.name, userAgent: profile.userAgent,
+                         clientNameHeader: profile.clientNameHeader,
+                         clientVersion: profile.client["clientVersion"] as? String ?? "")
     }
 }

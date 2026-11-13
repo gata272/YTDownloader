@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var resultFile: URL? = nil
     @State private var resultIsAudio = false
     @State private var savedNote = ""
+    @State private var triedClients: Set<String> = []
 
     private let downloader = DownloadManager()
 
@@ -99,6 +100,11 @@ struct ContentView: View {
     }
 
     private func fetch() async {
+        triedClients = []
+        await doFetch()
+    }
+
+    private func doFetch() async {
         guard let vid = Innertube.extractVideoID(from: urlText) else {
             status = "YouTubeのリンクから動画IDを読み取れませんでした"
             isError = true
@@ -110,7 +116,8 @@ struct ContentView: View {
         resultFile = nil
         defer { isBusy = false }
         do {
-            let v = try await Innertube.fetchInfo(videoID: vid)
+            let v = try await Innertube.fetchInfo(videoID: vid, excluding: triedClients)
+            triedClients.insert(v.clientName)
             info = v
             options = buildOptions(v)
             status = options.isEmpty ? "使える形式が見つかりませんでした" : ""
@@ -150,13 +157,13 @@ struct ContentView: View {
         isError = false
         defer { isBusy = false; progress = nil }
         do {
-            let first = try await downloader.download(urlString: opt.video.url, userAgent: v.userAgent) { p in
+            let first = try await downloader.download(urlString: opt.video.url, userAgent: v.userAgent, clientNameHeader: v.clientNameHeader, clientVersion: v.clientVersion) { p in
                 Task { @MainActor in progress = p }
             }
             var final = first
             if let audioFmt = opt.audio {
                 status = "音声をダウンロード中…"
-                let audioFile = try await downloader.download(urlString: audioFmt.url, userAgent: v.userAgent) { p in
+                let audioFile = try await downloader.download(urlString: audioFmt.url, userAgent: v.userAgent, clientNameHeader: v.clientNameHeader, clientVersion: v.clientVersion) { p in
                     Task { @MainActor in progress = p }
                 }
                 status = "結合中…"
@@ -172,8 +179,21 @@ struct ContentView: View {
             resultFile = final
             savedNote = ""
         } catch {
-            status = error.localizedDescription
-            isError = true
+            let msg = error.localizedDescription
+            if msg.contains("403"), triedClients.count < 4 {
+                // 403はクライアント方式との相性が原因のことが多いので、別の方式で取り直す
+                status = "方式 \(v.clientName) では403でした。別の方式で取り直します…"
+                isError = false
+                isBusy = false
+                progress = nil
+                await doFetch()
+                if let nv = info {
+                    status = "方式 \(nv.clientName) で取り直しました。形式をもう一度選んでください"
+                }
+            } else {
+                status = msg
+                isError = true
+            }
         }
     }
 
