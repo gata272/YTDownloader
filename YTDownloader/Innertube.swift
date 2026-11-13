@@ -69,18 +69,41 @@ enum Innertube {
     /// これを付けると要求が「通常の視聴セッション」に見え、bot判定を回避しやすくなる。
     private static func visitorData() async -> String {
         if let v = cachedVisitorData { return v }
-        guard let url = URL(string: "https://www.youtube.com/youtubei/v1/visitor_id?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false") else { return "" }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-        let body: [String: Any] = ["context": ["client": ["clientName": "WEB", "clientVersion": "2.20240111.09.00", "hl": "en", "gl": "US"]]]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let vd = json["visitorData"] as? String else { return "" }
-        cachedVisitorData = vd
-        return vd
+        // 方法1: visitor_id API（visitorData は通常トップレベルではなく responseContext の中にある）
+        if let url = URL(string: "https://www.youtube.com/youtubei/v1/visitor_id?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false") {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            let body: [String: Any] = ["context": ["client": ["clientName": "WEB", "clientVersion": "2.20240111.09.00", "hl": "en", "gl": "US"]]]
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            if let (data, _) = try? await URLSession.shared.data(for: req),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let vd = (json["responseContext"] as? [String: Any])?["visitorData"] as? String
+                    ?? json["visitorData"] as? String
+                if let vd, !vd.isEmpty {
+                    cachedVisitorData = vd
+                    return vd
+                }
+            }
+        }
+        // 方法2: トップページHTML内の ytcfg から拾う（yt-dlp も併用している方法）
+        if let url = URL(string: "https://www.youtube.com/") {
+            var req = URLRequest(url: url)
+            req.setValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+            if let (data, _) = try? await URLSession.shared.data(for: req),
+               let html = String(data: data, encoding: .utf8),
+               let re = try? NSRegularExpression(pattern: #""visitorData":"([^"]+)""#),
+               let m = re.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+               let r = Range(m.range(at: 1), in: html) {
+                let vd = String(html[r])
+                if !vd.isEmpty {
+                    cachedVisitorData = vd
+                    return vd
+                }
+            }
+        }
+        return ""
     }
 
     private static let clients: [ClientProfile] = [
@@ -140,8 +163,9 @@ enum Innertube {
         for profile in clients where !excluding.contains(profile.name) {
             do {
                 if let info = try await fetchInfo(videoID: videoID, profile: profile, cookie: cookie, visitorData: vd) {
-                    logLines.append("\(profile.name): 成功")
                     var result = info
+                    logLines[0] = result.visitorData.isEmpty ? "visitorData: 取得失敗" : "visitorData: 取得OK"
+                    logLines.append("\(profile.name): 成功")
                     result.fetchLog = logLines.joined(separator: "\n")
                     return result
                 } else {
@@ -180,7 +204,7 @@ enum Innertube {
         }
         var context: [String: Any] = ["client": profile.client]
         if profile.embed {
-            context["thirdParty"] = ["embedUrl": "https://www.youtube.com/"]
+            context["thirdParty"] = ["embedUrl": "https://www.youtube.com/embed/\(videoID)"]
         }
         var body: [String: Any] = [
             "context": context,
@@ -195,6 +219,13 @@ enum Innertube {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, _) = try await URLSession.shared.data(for: req)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+        // 応答の responseContext から visitorData を回収（以後の方式とダウンロードで使う）
+        var effectiveVd = vd
+        if let harvested = (json["responseContext"] as? [String: Any])?["visitorData"] as? String, !harvested.isEmpty {
+            effectiveVd = harvested
+            if cachedVisitorData == nil { cachedVisitorData = harvested }
+        }
 
         if let ps = json["playabilityStatus"] as? [String: Any],
            let status = ps["status"] as? String, status != "OK" {
@@ -233,7 +264,7 @@ enum Innertube {
                          clientName: profile.name, userAgent: profile.userAgent,
                          clientNameHeader: profile.clientNameHeader,
                          clientVersion: profile.client["clientVersion"] as? String ?? "")
-        resultInfo.visitorData = vd
+        resultInfo.visitorData = effectiveVd
         return resultInfo
     }
 }
