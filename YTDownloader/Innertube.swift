@@ -92,9 +92,10 @@ enum Innertube {
 
     static func fetchInfo(videoID: String, excluding: Set<String> = []) async throws -> VideoInfo {
         var lastError = "取得できませんでした"
+        let cookie = await SessionManager.cookieHeader()
         for profile in clients where !excluding.contains(profile.name) {
             do {
-                if let info = try await fetchInfo(videoID: videoID, profile: profile) {
+                if let info = try await fetchInfo(videoID: videoID, profile: profile, cookie: cookie) {
                     return info
                 }
             } catch let e as YTError {
@@ -108,7 +109,7 @@ enum Innertube {
         throw YTError(message: "全ての方式で取得に失敗しました（\(lastError)）。動画によっては制限されています。")
     }
 
-    private static func fetchInfo(videoID: String, profile: ClientProfile) async throws -> VideoInfo? {
+    private static func fetchInfo(videoID: String, profile: ClientProfile, cookie: String) async throws -> VideoInfo? {
         guard let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(profile.apiKey)&prettyPrint=false") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -116,6 +117,10 @@ enum Innertube {
         req.setValue(profile.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue(profile.clientNameHeader, forHTTPHeaderField: "X-YouTube-Client-Name")
         req.setValue(profile.client["clientVersion"] as? String, forHTTPHeaderField: "X-YouTube-Client-Version")
+        if !cookie.isEmpty {
+            req.setValue(cookie, forHTTPHeaderField: "Cookie")
+            req.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        }
         let body: [String: Any] = [
             "context": ["client": profile.client],
             "videoId": videoID,

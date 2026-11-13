@@ -22,12 +22,36 @@ struct ContentView: View {
     @State private var resultIsAudio = false
     @State private var savedNote = ""
     @State private var triedClients: Set<String> = []
+    @State private var showLogin = false
+    @State private var signedIn = false
 
     private let downloader = DownloadManager()
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("サインイン（bot確認の回避）") {
+                    HStack {
+                        Text(signedIn ? "状態：サインイン済み" : "状態：未サインイン")
+                            .font(.footnote)
+                        Spacer()
+                        if signedIn {
+                            Button("サインアウト") {
+                                Task {
+                                    await SessionManager.clearAll()
+                                    signedIn = false
+                                    status = "サインアウトしました"
+                                    isError = false
+                                }
+                            }
+                            .font(.footnote)
+                        }
+                    }
+                    Button("YouTubeにサインイン") { showLogin = true }
+                    Text("サインインはGoogleの公式ページ上で行います。パスワードがこのアプリに渡ることはありません。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
                 Section("YouTubeのリンク") {
                     TextField("https://www.youtube.com/watch?v=…", text: $urlText)
                         .textInputAutocapitalization(.never)
@@ -96,6 +120,14 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("YTダウンローダ")
+            .sheet(isPresented: $showLogin, onDismiss: {
+                Task { signedIn = await SessionManager.isSignedIn() }
+            }) {
+                WebLoginView { showLogin = false }
+            }
+            .task {
+                signedIn = await SessionManager.isSignedIn()
+            }
         }
     }
 
