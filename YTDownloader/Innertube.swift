@@ -127,9 +127,11 @@ enum Innertube {
                      "userAgent": "com.google.android.youtube/19.47.53 (Linux; U; Android 14) gzip"]),
     ]
 
-    static func fetchInfo(videoID: String, excluding: Set<String> = []) async throws -> VideoInfo {
+    static func fetchInfo(videoID: String, excluding: Set<String> = [], useCookies: Bool = false) async throws -> VideoInfo {
         var lastError = "取得できませんでした"
-        let cookie = await SessionManager.cookieHeader()
+        // Cookie 読み出しは WebKit データストアに触るため、明示的に有効化された場合のみ行う
+        // （LiveContainer 環境ではこのアクセス自体がクラッシュ原因になり得る）
+        let cookie = useCookies ? await SessionManager.cookieHeader() : ""
         let vd = await visitorData()
         for profile in clients where !excluding.contains(profile.name) {
             do {

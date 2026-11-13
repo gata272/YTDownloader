@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var triedClients: Set<String> = []
     @State private var showLogin = false
     @State private var signedIn = false
+    @State private var useCookies = false
 
     private let downloader = DownloadManager()
 
@@ -49,6 +50,9 @@ struct ContentView: View {
                     }
                     Button("YouTubeにサインイン") { showLogin = true }
                     Text("サインインはGoogleの公式ページ上で行います。パスワードがこのアプリに渡ることはありません。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("サインインのCookieを取得に使う", isOn: $useCookies)
+                    Text("ONにすると取得時にWebKitへアクセスします。「取得」でアプリが落ちる場合はOFFのまま使ってください。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -145,7 +149,7 @@ struct ContentView: View {
         resultFile = nil
         defer { isBusy = false }
         do {
-            let v = try await Innertube.fetchInfo(videoID: vid, excluding: triedClients)
+            let v = try await Innertube.fetchInfo(videoID: vid, excluding: triedClients, useCookies: useCookies)
             triedClients.insert(v.clientName)
             info = v
             options = buildOptions(v)
