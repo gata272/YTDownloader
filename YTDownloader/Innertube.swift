@@ -106,21 +106,45 @@ enum Innertube {
         return ""
     }
 
+    private static var cachedSTS: Int = 0
+
+    /// signatureTimestamp（sts）はプレイヤーJSの版番号で、埋め込みページのHTMLから取る（yt-dlp と同じ方法）。
+    /// これを playbackContext に入れないと、TV系・埋め込み系は全動画で
+    /// UNPLAYABLE「The page needs to be reloaded」を返すことが実測されている（2026-09）。
+    private static func signatureTimestamp(videoID: String) async -> Int {
+        if cachedSTS > 0 { return cachedSTS }
+        guard let url = URL(string: "https://www.youtube.com/embed/\(videoID)") else { return 0 }
+        var req = URLRequest(url: url)
+        req.setValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let html = String(data: data, encoding: .utf8) else { return 0 }
+        for pattern in [#""signatureTimestamp":(\d+)"#, #""sts":(\d+)"#] {
+            if let re = try? NSRegularExpression(pattern: pattern),
+               let m = re.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+               let r = Range(m.range(at: 1), in: html),
+               let v = Int(html[r]), v > 0 {
+                cachedSTS = v
+                return v
+            }
+        }
+        return 0
+    }
+
+    // 2026-08以降、TV系エンドポイントは Cobalt 系 User-Agent を拒否するように変わった
+    // （UNPLAYABLE「The page needs to be reloaded」）。PlayStation 4 のUAは通ることが実測済み。
+    private static let tvUserAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+
     private static let clients: [ClientProfile] = [
+        // VISIONOS: 2026年時点で、POトークンなしで直接URLを返し、ダウンロード側も通る
+        // ほぼ唯一の方式として yt-dlp 等の先頭に置かれている方式（name id 101, version 1.02）
         ClientProfile(
-            name: "TV_SIMPLY", clientNameHeader: "",
-            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-            userAgent: "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
-            client: ["clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER", "clientVersion": "2.0",
-                     "userAgent": "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version"],
-            embed: true),
-        ClientProfile(
-            name: "WEB_EMBEDDED", clientNameHeader: "",
-            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            client: ["clientName": "WEB_EMBEDDED_PLAYER", "clientVersion": "1.20250219.01.00",
-                     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"],
-            embed: true),
+            name: "VISIONOS", clientNameHeader: "101",
+            apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+            userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+            client: ["clientName": "VISIONOS", "clientVersion": "1.02",
+                     "deviceMake": "Apple", "deviceModel": "RealityDevice17,1",
+                     "osName": "visionOS",
+                     "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"]),
         ClientProfile(
             name: "ANDROID_VR", clientNameHeader: "28",
             apiKey: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
@@ -132,37 +156,53 @@ enum Innertube {
         ClientProfile(
             name: "IOS", clientNameHeader: "5",
             apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
-            userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X;)",
-            client: ["clientName": "IOS", "clientVersion": "20.10.4",
+            userAgent: "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            client: ["clientName": "IOS", "clientVersion": "21.26.4",
                      "deviceMake": "Apple", "deviceModel": "iPhone16,2",
-                     "osName": "iPhone", "osVersion": "18.3.1.22D72",
-                     "userAgent": "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X;)"]),
+                     "osName": "iPhone", "osVersion": "18.3.2.22D82",
+                     "userAgent": "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"]),
+        ClientProfile(
+            name: "WEB_EMBEDDED", clientNameHeader: "56",
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            client: ["clientName": "WEB_EMBEDDED_PLAYER", "clientVersion": "1.20260115.01.00",
+                     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"],
+            embed: true),
         ClientProfile(
             name: "TVHTML5", clientNameHeader: "7",
             apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-            userAgent: "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
-            client: ["clientName": "TVHTML5", "clientVersion": "7.20250219.16.00",
-                     "userAgent": "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version"]),
+            userAgent: tvUserAgent,
+            client: ["clientName": "TVHTML5", "clientVersion": "7.20260817.13.00",
+                     "userAgent": tvUserAgent]),
+        ClientProfile(
+            name: "TV_SIMPLY", clientNameHeader: "85",
+            apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            userAgent: tvUserAgent,
+            client: ["clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER", "clientVersion": "2.0",
+                     "userAgent": tvUserAgent],
+            embed: true),
         ClientProfile(
             name: "ANDROID", clientNameHeader: "3",
             apiKey: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
-            userAgent: "com.google.android.youtube/19.47.53 (Linux; U; Android 14) gzip",
-            client: ["clientName": "ANDROID", "clientVersion": "19.47.53",
-                     "androidSdkVersion": 34, "osName": "Android", "osVersion": "14",
-                     "userAgent": "com.google.android.youtube/19.47.53 (Linux; U; Android 14) gzip"]),
+            userAgent: "com.google.android.youtube/21.03.36 (Linux; U; Android 16) gzip",
+            client: ["clientName": "ANDROID", "clientVersion": "21.03.36",
+                     "androidSdkVersion": 36, "osName": "Android", "osVersion": "16",
+                     "userAgent": "com.google.android.youtube/21.03.36 (Linux; U; Android 16) gzip"]),
     ]
 
     static func fetchInfo(videoID: String, excluding: Set<String> = [], useCookies: Bool = false) async throws -> VideoInfo {
         var lastError = "取得できませんでした"
-        var logLines: [String] = [""]
+        var logLines: [String] = ["", ""]
         // Cookie 読み出しは WebKit データストアに触るため、明示的に有効化された場合のみ行う
         // （LiveContainer 環境ではこのアクセス自体がクラッシュ原因になり得る）
         let cookie = useCookies ? await SessionManager.cookieHeader() : ""
         let vd = await visitorData()
         logLines[0] = vd.isEmpty ? "visitorData: 取得失敗" : "visitorData: 取得OK"
+        let sts = await signatureTimestamp(videoID: videoID)
+        logLines[1] = sts > 0 ? "signatureTimestamp: 取得OK" : "signatureTimestamp: 取得失敗"
         for profile in clients where !excluding.contains(profile.name) {
             do {
-                if let info = try await fetchInfo(videoID: videoID, profile: profile, cookie: cookie, visitorData: vd) {
+                if let info = try await fetchInfo(videoID: videoID, profile: profile, cookie: cookie, visitorData: vd, signatureTimestamp: sts) {
                     var result = info
                     logLines[0] = result.visitorData.isEmpty ? "visitorData: 取得失敗" : "visitorData: 取得OK"
                     logLines.append("\(profile.name): 成功")
@@ -185,7 +225,7 @@ enum Innertube {
         throw YTError(message: "全ての方式で取得に失敗しました。\n" + logLines.joined(separator: "\n"))
     }
 
-    private static func fetchInfo(videoID: String, profile: ClientProfile, cookie: String, visitorData vd: String) async throws -> VideoInfo? {
+    private static func fetchInfo(videoID: String, profile: ClientProfile, cookie: String, visitorData vd: String, signatureTimestamp sts: Int) async throws -> VideoInfo? {
         guard let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(profile.apiKey)&prettyPrint=false") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -205,11 +245,17 @@ enum Innertube {
         var context: [String: Any] = ["client": profile.client]
         if profile.embed {
             context["thirdParty"] = ["embedUrl": "https://www.youtube.com/embed/\(videoID)"]
+            // 埋め込み系は、要求が埋め込みページから来た形（Referer）も揃える
+            req.setValue("https://www.youtube.com/embed/\(videoID)", forHTTPHeaderField: "Referer")
+        }
+        var playback: [String: Any] = ["vis": 0, "splay": false, "lactMilliseconds": "-1"]
+        if sts > 0 {
+            playback["signatureTimestamp"] = sts
         }
         var body: [String: Any] = [
             "context": context,
             "videoId": videoID,
-            "playbackContext": ["contentPlaybackContext": ["vis": 0, "splay": false, "lactMilliseconds": "-1"]],
+            "playbackContext": ["contentPlaybackContext": playback],
             "racyCheckOk": true,
             "contentCheckOk": true,
         ]
