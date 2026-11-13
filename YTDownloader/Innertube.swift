@@ -72,6 +72,7 @@ enum Innertube {
         // 方法1: visitor_id API（visitorData は通常トップレベルではなく responseContext の中にある）
         if let url = URL(string: "https://www.youtube.com/youtubei/v1/visitor_id?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false") {
             var req = URLRequest(url: url)
+            req.timeoutInterval = 20
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
@@ -90,6 +91,7 @@ enum Innertube {
         // 方法2: トップページHTML内の ytcfg から拾う（yt-dlp も併用している方法）
         if let url = URL(string: "https://www.youtube.com/") {
             var req = URLRequest(url: url)
+            req.timeoutInterval = 20
             req.setValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
             if let (data, _) = try? await URLSession.shared.data(for: req),
                let html = String(data: data, encoding: .utf8),
@@ -115,6 +117,7 @@ enum Innertube {
         if cachedSTS > 0 { return cachedSTS }
         guard let url = URL(string: "https://www.youtube.com/embed/\(videoID)") else { return 0 }
         var req = URLRequest(url: url)
+        req.timeoutInterval = 20
         req.setValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         guard let (data, _) = try? await URLSession.shared.data(for: req),
               let html = String(data: data, encoding: .utf8) else { return 0 }
@@ -228,6 +231,7 @@ enum Innertube {
     private static func fetchInfo(videoID: String, profile: ClientProfile, cookie: String, visitorData vd: String, signatureTimestamp sts: Int) async throws -> VideoInfo? {
         guard let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(profile.apiKey)&prettyPrint=false") else { return nil }
         var req = URLRequest(url: url)
+        req.timeoutInterval = 20
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(profile.userAgent, forHTTPHeaderField: "User-Agent")

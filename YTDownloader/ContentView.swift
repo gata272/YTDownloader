@@ -234,10 +234,12 @@ struct ContentView: View {
     }
 
     private func savePhotos(_ file: URL, audio: Bool) async {
-        let ok = audio ? await MediaTools.saveAudioToPhotos(file) : await MediaTools.saveToPhotos(file)
-        savedNote = ok ? "写真アプリに保存しました" : ""
-        if !ok {
-            status = "写真への保存に失敗しました（権限を確認してください）"
+        let (ok, detail) = audio ? await MediaTools.saveAudioToPhotos(file) : await MediaTools.saveToPhotos(file)
+        if ok {
+            savedNote = "写真アプリに保存しました"
+        } else {
+            savedNote = ""
+            status = "写真への保存に失敗しました：\(detail)"
             isError = true
         }
     }
