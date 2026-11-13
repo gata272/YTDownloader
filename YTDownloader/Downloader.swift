@@ -12,11 +12,15 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func download(urlString: String, userAgent: String, clientNameHeader: String = "", clientVersion: String = "", progress: @escaping (Double) -> Void) async throws -> URL {
+    func download(urlString: String, userAgent: String, clientNameHeader: String = "", clientVersion: String = "", visitorData: String = "", progress: @escaping (Double) -> Void) async throws -> URL {
         guard let url = URL(string: urlString) else { throw YTError(message: "URLが不正です") }
         var req = URLRequest(url: url)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+        req.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        if !visitorData.isEmpty {
+            req.setValue(visitorData, forHTTPHeaderField: "X-Goog-Visitor-Id")
+        }
         if !clientNameHeader.isEmpty {
             req.setValue(clientNameHeader, forHTTPHeaderField: "X-YouTube-Client-Name")
         }

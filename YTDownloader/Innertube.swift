@@ -24,6 +24,8 @@ struct VideoInfo {
     let userAgent: String
     let clientNameHeader: String
     let clientVersion: String
+    var visitorData: String = ""
+    var fetchLog: String = ""
 }
 
 struct YTError: LocalizedError {
@@ -129,24 +131,34 @@ enum Innertube {
 
     static func fetchInfo(videoID: String, excluding: Set<String> = [], useCookies: Bool = false) async throws -> VideoInfo {
         var lastError = "取得できませんでした"
+        var logLines: [String] = [""]
         // Cookie 読み出しは WebKit データストアに触るため、明示的に有効化された場合のみ行う
         // （LiveContainer 環境ではこのアクセス自体がクラッシュ原因になり得る）
         let cookie = useCookies ? await SessionManager.cookieHeader() : ""
         let vd = await visitorData()
+        logLines[0] = vd.isEmpty ? "visitorData: 取得失敗" : "visitorData: 取得OK"
         for profile in clients where !excluding.contains(profile.name) {
             do {
                 if let info = try await fetchInfo(videoID: videoID, profile: profile, cookie: cookie, visitorData: vd) {
-                    return info
+                    logLines.append("\(profile.name): 成功")
+                    var result = info
+                    result.fetchLog = logLines.joined(separator: "\n")
+                    return result
+                } else {
+                    logLines.append("\(profile.name): 直接URLが取得できませんでした")
                 }
             } catch let e as YTError {
                 lastError = e.message
+                logLines.append(e.message)
                 continue
             } catch {
                 lastError = error.localizedDescription
+                logLines.append("\(profile.name): \(lastError)")
                 continue
             }
         }
-        throw YTError(message: "全ての方式で取得に失敗しました（\(lastError)）。動画によっては制限されています。")
+        logLines.append("最後のエラー: \(lastError)")
+        throw YTError(message: "全ての方式で取得に失敗しました。\n" + logLines.joined(separator: "\n"))
     }
 
     private static func fetchInfo(videoID: String, profile: ClientProfile, cookie: String, visitorData vd: String) async throws -> VideoInfo? {
@@ -215,11 +227,13 @@ enum Innertube {
         let videos = adaptive.filter { !$0.isAudio }.sorted { $0.height > $1.height }
         let audios = adaptive.filter { $0.isAudio }.sorted { $0.bitrate > $1.bitrate }
         guard !muxed.isEmpty || (!videos.isEmpty && !audios.isEmpty) || !audios.isEmpty else { return nil }
-        return VideoInfo(title: title,
+        var resultInfo = VideoInfo(title: title,
                          muxed: muxed.sorted { $0.height > $1.height },
                          videos: videos, audios: audios,
                          clientName: profile.name, userAgent: profile.userAgent,
                          clientNameHeader: profile.clientNameHeader,
                          clientVersion: profile.client["clientVersion"] as? String ?? "")
+        resultInfo.visitorData = vd
+        return resultInfo
     }
 }

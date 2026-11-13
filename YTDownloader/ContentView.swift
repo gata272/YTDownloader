@@ -74,6 +74,9 @@ struct ContentView: View {
                     Section("動画") {
                         Text(info.title).font(.headline)
                         Text("取得方式: \(info.clientName)").font(.caption).foregroundStyle(.secondary)
+                        if !info.fetchLog.isEmpty {
+                            Text(info.fetchLog).font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
                     Section("ダウンロード形式") {
                         ForEach(options) { opt in
@@ -190,13 +193,13 @@ struct ContentView: View {
         isError = false
         defer { isBusy = false; progress = nil }
         do {
-            let first = try await downloader.download(urlString: opt.video.url, userAgent: v.userAgent, clientNameHeader: v.clientNameHeader, clientVersion: v.clientVersion) { p in
+            let first = try await downloader.download(urlString: opt.video.url, userAgent: v.userAgent, clientNameHeader: v.clientNameHeader, clientVersion: v.clientVersion, visitorData: v.visitorData) { p in
                 Task { @MainActor in progress = p }
             }
             var final = first
             if let audioFmt = opt.audio {
                 status = "音声をダウンロード中…"
-                let audioFile = try await downloader.download(urlString: audioFmt.url, userAgent: v.userAgent, clientNameHeader: v.clientNameHeader, clientVersion: v.clientVersion) { p in
+                let audioFile = try await downloader.download(urlString: audioFmt.url, userAgent: v.userAgent, clientNameHeader: v.clientNameHeader, clientVersion: v.clientVersion, visitorData: v.visitorData) { p in
                     Task { @MainActor in progress = p }
                 }
                 status = "結合中…"
