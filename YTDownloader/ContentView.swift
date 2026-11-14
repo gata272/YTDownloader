@@ -15,6 +15,19 @@ struct PlayTarget: Identifiable {
     let url: URL
 }
 
+struct ShareTarget: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 struct ContentView: View {
     @State private var urlText = ""
     @State private var info: VideoInfo? = nil
@@ -34,6 +47,8 @@ struct ContentView: View {
     @State private var playing: PlayTarget? = nil
     @State private var resultItem: LibraryItem? = nil
     @State private var libraryAlertPath: String? = nil
+    @State private var signInExpanded = false
+    @State private var shareTarget: ShareTarget? = nil
 
     private let downloader = DownloadManager()
 
@@ -55,32 +70,47 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 Section {
-                    HStack {
-                        Text(signedIn ? "状態：サインイン済み" : "状態：未サインイン")
-                            .font(.footnote)
-                        Spacer()
-                        if signedIn {
-                            Button("サインアウト", role: .destructive) {
-                                Task {
-                                    await SessionManager.clearAll()
-                                    signedIn = false
-                                    status = "サインアウトしました"
-                                    isError = false
+                    if signInExpanded {
+                        HStack {
+                            Text(signedIn ? "状態：サインイン済み" : "状態：未サインイン")
+                                .font(.footnote)
+                            Spacer()
+                            if signedIn {
+                                Button("サインアウト", role: .destructive) {
+                                    Task {
+                                        await SessionManager.clearAll()
+                                        signedIn = false
+                                        status = "サインアウトしました"
+                                        isError = false
+                                    }
                                 }
+                                .font(.footnote)
                             }
-                            .font(.footnote)
+                        }
+                        Button {
+                            showLogin = true
+                        } label: {
+                            Label("YouTubeにサインイン", systemImage: "person.crop.circle")
+                        }
+                        Toggle("サインインのCookieを取得に使う", isOn: $useCookies)
+                    }
+                } header: {
+                    Button {
+                        withAnimation { signInExpanded.toggle() }
+                    } label: {
+                        HStack {
+                            Text("サインイン（bot確認の回避）")
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                                .rotationEffect(.degrees(signInExpanded ? 0 : -90))
                         }
                     }
-                    Button {
-                        showLogin = true
-                    } label: {
-                        Label("YouTubeにサインイン", systemImage: "person.crop.circle")
-                    }
-                    Toggle("サインインのCookieを取得に使う", isOn: $useCookies)
-                } header: {
-                    Text("サインイン（bot確認の回避）")
+                    .buttonStyle(.plain)
                 } footer: {
-                    Text("サインインはGoogleの公式ページ上で行います。パスワードがこのアプリに渡ることはありません。Cookieを使う設定にすると取得時にWebKitへアクセスします。「取得」でアプリが落ちる場合はOFFのまま使ってください。")
+                    if signInExpanded {
+                        Text("サインインはGoogleの公式ページ上で行います。パスワードがこのアプリに渡ることはありません。Cookieを使う設定にすると取得時にWebKitへアクセスします。「取得」でアプリが落ちる場合はOFFのまま使ってください。")
+                    }
                 }
 
                 Section {
@@ -247,12 +277,44 @@ struct ContentView: View {
                                     Label("写真へ", systemImage: "photo")
                                 }
                                 .tint(.blue)
+                                Button {
+                                    share(item: item)
+                                } label: {
+                                    Label("共有", systemImage: "square.and.arrow.up")
+                                }
+                                .tint(.green)
+                            }
+                            .contextMenu {
+                                Button {
+                                    play(item: item)
+                                } label: {
+                                    Label("再生", systemImage: "play.circle")
+                                }
+                                Button {
+                                    Task { await saveLibraryItemToPhotos(item) }
+                                } label: {
+                                    Label("写真アプリに保存", systemImage: "photo")
+                                }
+                                Button {
+                                    share(item: item)
+                                } label: {
+                                    Label("共有", systemImage: "square.and.arrow.up")
+                                }
+                                Divider()
+                                Button(role: .destructive) {
+                                    library.remove(item)
+                                } label: {
+                                    Label("削除", systemImage: "trash")
+                                }
                             }
                         }
                     }
                 }
             }
             .navigationTitle("ライブラリ")
+            .sheet(item: $shareTarget) { target in
+                ShareSheet(url: target.url)
+            }
             .alert("ファイルが見つかりません", isPresented: Binding(
                 get: { libraryAlertPath != nil },
                 set: { if !$0 { libraryAlertPath = nil } }
@@ -269,6 +331,14 @@ struct ContentView: View {
     private func play(item: LibraryItem) {
         if let url = library.resolve(item) {
             playing = PlayTarget(url: url)
+        } else {
+            libraryAlertPath = item.absolutePath
+        }
+    }
+
+    private func share(item: LibraryItem) {
+        if let url = library.resolve(item) {
+            shareTarget = ShareTarget(url: url)
         } else {
             libraryAlertPath = item.absolutePath
         }
