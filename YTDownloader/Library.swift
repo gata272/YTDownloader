@@ -2,26 +2,20 @@ import Foundation
 import SwiftUI
 import AVKit
 
-/// アプリ内に保存した動画・音声の記録（実ファイルは Documents/Library 内）
-/// LiveContainer ではパスの再構築が失敗することがあるため、
-/// 登録時に実際に使えた絶対パスも一緒に保持し、そちらを優先して使う。
+/// アプリ内に保存した動画・音声の記録。
+/// ダウンロード直後のファイルURL（絶対パス）をそのまま保持し、
+/// 移動もパスの再構築もしない（LiveContainer 環境でパス変換が絡むと実ファイルに届かなくなるため）。
+/// 存在チェックで弾かず、再生・保存は実際に行って結果で判断する。
 struct LibraryItem: Identifiable, Codable {
     var id: UUID
     var title: String
-    var storedPath: String     // Documents からの相対パス（例: Library/<id>.mp4）
-    var absolutePath: String   // 登録時点で実在を確認した絶対パス
+    var absolutePath: String   // ダウンロードが返したファイルの絶対パス（そのまま使う）
     var isAudio: Bool
     var savedAt: Date
     var sizeBytes: Int64
 
     var url: URL {
-        let abs = URL(fileURLWithPath: absolutePath)
-        if FileManager.default.fileExists(atPath: abs.path) { return abs }
-        return DownloadManager.documentsDir.appendingPathComponent(storedPath)
-    }
-
-    var fileExists: Bool {
-        FileManager.default.fileExists(atPath: url.path)
+        URL(fileURLWithPath: absolutePath)
     }
 }
 
@@ -40,35 +34,12 @@ final class LibraryStore: ObservableObject {
         items = decoded
     }
 
-    /// ダウンロード済みファイルを Library フォルダへ移し、実在するパスで登録する
+    /// ダウンロード済みファイルを「そのままの場所・パス」で登録する（移動しない）
     func add(title: String, file: URL, isAudio: Bool) -> LibraryItem {
-        let id = UUID()
-        let libDir = DownloadManager.documentsDir.appendingPathComponent("Library", isDirectory: true)
-        try? FileManager.default.createDirectory(at: libDir, withIntermediateDirectories: true)
-        let ext = file.pathExtension.isEmpty ? "mp4" : file.pathExtension
-        let dest = libDir.appendingPathComponent(id.uuidString).appendingPathExtension(ext)
-
-        var finalURL = file
-        var storedPath = file.lastPathComponent
-        if file.standardizedFileURL != dest.standardizedFileURL {
-            do {
-                try FileManager.default.moveItem(at: file, to: dest)
-                finalURL = dest
-                storedPath = "Library/\(dest.lastPathComponent)"
-            } catch {
-                // 移動できなければ元の場所のまま登録する
-                finalURL = file
-                storedPath = file.lastPathComponent
-            }
-        } else {
-            storedPath = "Library/\(dest.lastPathComponent)"
-        }
-
-        let attrs = try? FileManager.default.attributesOfItem(atPath: finalURL.path)
+        let attrs = try? FileManager.default.attributesOfItem(atPath: file.path)
         let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-        let item = LibraryItem(id: id, title: title, storedPath: storedPath,
-                               absolutePath: finalURL.path, isAudio: isAudio,
-                               savedAt: Date(), sizeBytes: size)
+        let item = LibraryItem(id: UUID(), title: title, absolutePath: file.path,
+                               isAudio: isAudio, savedAt: Date(), sizeBytes: size)
         items.insert(item, at: 0)
         persist()
         return item
@@ -87,10 +58,11 @@ final class LibraryStore: ObservableObject {
     }
 }
 
-/// アプリ内プレイヤー（シート競合を避けるため fullScreenCover で使う）
+/// アプリ内プレイヤー（fullScreenCover で使う）。再生失敗時は実際のエラーを表示する。
 struct PlayerView: View {
     let url: URL
     @State private var player: AVPlayer
+    @State private var errorText = ""
     @Environment(\.dismiss) private var dismiss
 
     init(url: URL) {
@@ -101,12 +73,24 @@ struct PlayerView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            if FileManager.default.fileExists(atPath: url.path) {
-                VideoPlayer(player: player)
-                    .ignoresSafeArea()
-            } else {
-                Text("ファイルが見つかりません")
-                    .foregroundStyle(.white)
+            VideoPlayer(player: player)
+                .ignoresSafeArea()
+            if !errorText.isEmpty {
+                VStack(spacing: 8) {
+                    Text("再生できませんでした")
+                        .foregroundStyle(.white)
+                        .font(.headline)
+                    Text(errorText)
+                        .foregroundStyle(.white)
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                    Text(url.path)
+                        .foregroundStyle(.gray)
+                        .font(.caption2)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Button {
                 dismiss()
@@ -118,7 +102,21 @@ struct PlayerView: View {
             }
             .padding()
         }
-        .onAppear { player.play() }
+        .onAppear {
+            player.play()
+            Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if let item = player.currentItem, item.status == .failed {
+                    let ns = item.error as NSError?
+                    errorText = "\(item.error?.localizedDescription ?? "不明なエラー") [\(ns?.domain ?? "-") \(ns?.code ?? 0)]"
+                }
+            }
+        }
         .onDisappear { player.pause() }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime, object: player.currentItem)) { note in
+            if let e = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError {
+                errorText = "\(e.localizedDescription) [\(e.domain) \(e.code)]"
+            }
+        }
     }
 }

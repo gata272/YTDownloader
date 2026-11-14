@@ -161,7 +161,7 @@
 					"@executable_path/Frameworks",
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.ytdownloader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -187,7 +187,7 @@
 					"@executable_path/Frameworks",
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.ytdownloader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

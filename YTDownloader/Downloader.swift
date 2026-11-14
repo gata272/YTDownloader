@@ -181,9 +181,6 @@ enum MediaTools {
         guard status == .authorized || status == .limited else {
             return (false, "写真への追加が許可されていません（認可状態: \(String(describing: status))）。設定アプリでこのアプリの写真アクセスを確認してください")
         }
-        guard FileManager.default.fileExists(atPath: file.path) else {
-            return (false, "保存するファイルが見つかりませんでした。ダウンロードからやり直してください")
-        }
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 PHAssetCreationRequest.forAsset().addResource(with: resourceType, fileURL: file, options: nil)
