@@ -136,9 +136,15 @@ struct ContentView: View {
                                 Text(item.title).lineLimit(2)
                                 Text("\(item.isAudio ? "音声" : "動画") / \(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file)) / \(item.savedAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption).foregroundStyle(.secondary)
+                                if !item.fileExists {
+                                    Text("ファイルが見つかりません")
+                                        .font(.caption).foregroundStyle(.red)
+                                }
                                 HStack(spacing: 16) {
                                     Button("再生") { playingItem = item }
+                                        .disabled(!item.fileExists)
                                     Button("写真へ") { Task { await savePhotos(item.url, audio: item.isAudio) } }
+                                        .disabled(!item.fileExists)
                                     ShareLink(item: item.url) { Text("共有") }
                                     Spacer()
                                     Button("削除", role: .destructive) { library.remove(item) }
@@ -155,7 +161,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .sheet(item: $playingItem) { item in
+            .fullScreenCover(item: $playingItem) { item in
                 PlayerView(url: item.url)
             }
             .navigationTitle("YTダウンローダ")
@@ -267,8 +273,10 @@ struct ContentView: View {
     }
 
     private func registerResult() {
-        guard let resultFile else { return }
-        resultItem = library.add(title: info?.title ?? "video", file: resultFile, isAudio: resultIsAudio)
+        guard let current = resultFile else { return }
+        let item = library.add(title: info?.title ?? "video", file: current, isAudio: resultIsAudio)
+        resultItem = item
+        resultFile = item.url
         savedNote = "ライブラリに保存しました"
     }
 
