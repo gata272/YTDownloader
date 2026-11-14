@@ -10,6 +10,11 @@ struct DownloadOption: Identifiable {
     let audioOnly: Bool
 }
 
+struct PlayTarget: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 struct ContentView: View {
     @State private var urlText = ""
     @State private var info: VideoInfo? = nil
@@ -26,21 +31,36 @@ struct ContentView: View {
     @State private var signedIn = false
     @State private var useCookies = false
     @StateObject private var library = LibraryStore()
-    @State private var playingItem: LibraryItem? = nil
+    @State private var playing: PlayTarget? = nil
     @State private var resultItem: LibraryItem? = nil
+    @State private var libraryAlertPath: String? = nil
 
     private let downloader = DownloadManager()
 
     var body: some View {
+        TabView {
+            downloadTab
+                .tabItem { Label("ダウンロード", systemImage: "arrow.down.circle") }
+            libraryTab
+                .tabItem { Label("ライブラリ", systemImage: "play.square.stack") }
+        }
+        .fullScreenCover(item: $playing) { target in
+            PlayerView(url: target.url)
+        }
+    }
+
+    // MARK: - ダウンロードタブ
+
+    private var downloadTab: some View {
         NavigationStack {
             Form {
-                Section("サインイン（bot確認の回避）") {
+                Section {
                     HStack {
                         Text(signedIn ? "状態：サインイン済み" : "状態：未サインイン")
                             .font(.footnote)
                         Spacer()
                         if signedIn {
-                            Button("サインアウト") {
+                            Button("サインアウト", role: .destructive) {
                                 Task {
                                     await SessionManager.clearAll()
                                     signedIn = false
@@ -51,34 +71,49 @@ struct ContentView: View {
                             .font(.footnote)
                         }
                     }
-                    Button("YouTubeにサインイン") { showLogin = true }
-                    Text("サインインはGoogleの公式ページ上で行います。パスワードがこのアプリに渡ることはありません。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        showLogin = true
+                    } label: {
+                        Label("YouTubeにサインイン", systemImage: "person.crop.circle")
+                    }
                     Toggle("サインインのCookieを取得に使う", isOn: $useCookies)
-                    Text("ONにすると取得時にWebKitへアクセスします。「取得」でアプリが落ちる場合はOFFのまま使ってください。")
-                        .font(.caption).foregroundStyle(.secondary)
+                } header: {
+                    Text("サインイン（bot確認の回避）")
+                } footer: {
+                    Text("サインインはGoogleの公式ページ上で行います。パスワードがこのアプリに渡ることはありません。Cookieを使う設定にすると取得時にWebKitへアクセスします。「取得」でアプリが落ちる場合はOFFのまま使ってください。")
                 }
 
-                Section("YouTubeのリンク") {
-                    TextField("https://www.youtube.com/watch?v=…", text: $urlText)
+                Section {
+                    TextField("YouTubeのリンク", text: $urlText, prompt: Text("https://www.youtube.com/watch?v=…"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    HStack {
-                        Button("貼り付け") {
-                            if let s = UIPasteboard.general.string { urlText = s }
-                        }
-                        Spacer()
-                        Button("取得") { Task { await fetch() } }
-                            .disabled(isBusy || urlText.isEmpty)
+                    Button {
+                        if let s = UIPasteboard.general.string { urlText = s }
+                    } label: {
+                        Label("貼り付け", systemImage: "doc.on.clipboard")
                     }
+                    Button {
+                        Task { await fetch() }
+                    } label: {
+                        Label("取得", systemImage: "arrow.down.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isBusy || urlText.isEmpty)
+                } header: {
+                    Text("YouTubeのリンク")
                 }
 
                 if let info {
                     Section("動画") {
-                        Text(info.title).font(.headline)
-                        Text("取得方式: \(info.clientName)").font(.caption).foregroundStyle(.secondary)
+                        Text(info.title)
+                            .font(.headline)
+                        LabeledContent("取得方式", value: info.clientName)
+                            .font(.subheadline)
                         if !info.fetchLog.isEmpty {
-                            Text(info.fetchLog).font(.caption2).foregroundStyle(.secondary)
+                            Text(info.fetchLog)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
                     Section("ダウンロード形式") {
@@ -87,12 +122,16 @@ struct ContentView: View {
                                 Task { await runDownload(opt) }
                             } label: {
                                 HStack {
-                                    VStack(alignment: .leading) {
+                                    VStack(alignment: .leading, spacing: 2) {
                                         Text(opt.label)
-                                        Text(opt.detail).font(.caption).foregroundStyle(.secondary)
+                                            .foregroundStyle(.primary)
+                                        Text(opt.detail)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Image(systemName: "arrow.down.circle")
+                                        .foregroundStyle(Color.accentColor)
                                 }
                             }
                             .disabled(isBusy)
@@ -102,66 +141,56 @@ struct ContentView: View {
 
                 if let progress {
                     Section("進捗") {
-                        ProgressView(value: progress)
-                        Text("\(Int(progress * 100))%").font(.caption)
+                        ProgressView(value: progress) {
+                            Text("ダウンロード中… \(Int(progress * 100))%")
+                                .font(.subheadline)
+                        }
                     }
                 }
 
                 if let resultFile {
                     Section("保存先") {
                         if let resultItem {
-                            Button("アプリ内で再生") { playingItem = resultItem }
-                            Text("ライブラリに保存済み").font(.caption).foregroundStyle(.secondary)
+                            Button {
+                                play(item: resultItem)
+                            } label: {
+                                Label("アプリ内で再生", systemImage: "play.circle")
+                            }
+                            Label("ライブラリに保存済み", systemImage: "checkmark.circle")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         } else {
-                            Button("アプリ内に保存（ライブラリ）") { registerResult() }
+                            Button {
+                                registerResult()
+                            } label: {
+                                Label("アプリ内に保存（ライブラリ）", systemImage: "square.and.arrow.down")
+                            }
                         }
-                        if !resultIsAudio {
-                            Button("写真アプリに保存") { Task { await savePhotos(resultFile, audio: false) } }
-                        } else {
-                            Button("写真アプリに保存（音声）") { Task { await savePhotos(resultFile, audio: true) } }
+                        Button {
+                            Task { await savePhotos(resultFile, audio: resultIsAudio) }
+                        } label: {
+                            Label(resultIsAudio ? "写真アプリに保存（音声）" : "写真アプリに保存", systemImage: "photo")
                         }
                         ShareLink(item: resultFile) {
-                            Text("共有（ファイルに保存など）")
+                            Label("共有（ファイルに保存など）", systemImage: "square.and.arrow.up")
                         }
                         if !savedNote.isEmpty {
-                            Text(savedNote).font(.caption).foregroundStyle(.green)
-                        }
-                    }
-                }
-
-                if !library.items.isEmpty {
-                    Section("ライブラリ") {
-                        ForEach(library.items) { item in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title).lineLimit(2)
-                                Text("\(item.isAudio ? "音声" : "動画") / \(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file)) / \(item.savedAt.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(item.absolutePath)
-                                    .font(.caption2).foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                                HStack(spacing: 16) {
-                                    Button("再生") { playingItem = item }
-                                    Button("写真へ") { Task { await savePhotos(item.url, audio: item.isAudio) } }
-                                    ShareLink(item: item.url) { Text("共有") }
-                                    Spacer()
-                                    Button("削除", role: .destructive) { library.remove(item) }
-                                }
-                                .font(.footnote)
-                            }
+                            Text(savedNote)
+                                .font(.caption)
+                                .foregroundStyle(.green)
                         }
                     }
                 }
 
                 if !status.isEmpty {
                     Section("状態") {
-                        Text(status).font(.footnote).foregroundStyle(isError ? .red : .primary)
+                        Text(status)
+                            .font(.footnote)
+                            .foregroundStyle(isError ? .red : .primary)
                     }
                 }
             }
-            .fullScreenCover(item: $playingItem) { item in
-                PlayerView(url: item.url)
-            }
-            .navigationTitle("YTダウンローダ")
+            .navigationTitle("YTDownloader")
             .sheet(isPresented: $showLogin, onDismiss: {
                 Task { signedIn = await SessionManager.isSignedIn() }
             }) {
@@ -169,6 +198,91 @@ struct ContentView: View {
             }
         }
     }
+
+    // MARK: - ライブラリタブ
+
+    private var libraryTab: some View {
+        NavigationStack {
+            Group {
+                if library.items.isEmpty {
+                    ContentUnavailableView {
+                        Label("ライブラリは空です", systemImage: "play.square.stack")
+                    } description: {
+                        Text("ダウンロードした動画を「アプリ内に保存」すると、ここに表示されます。")
+                    }
+                } else {
+                    List {
+                        ForEach(library.items) { item in
+                            Button {
+                                play(item: item)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ThumbnailView(item: item, store: library)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.title)
+                                            .font(.subheadline)
+                                            .lineLimit(2)
+                                            .foregroundStyle(.primary)
+                                        Text("\(item.isAudio ? "音声" : "動画") ・ \(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file)) ・ \(item.savedAt.formatted(date: .abbreviated, time: .shortened))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "play.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    library.remove(item)
+                                } label: {
+                                    Label("削除", systemImage: "trash")
+                                }
+                            }
+                            .swipeActions(edge: .leading) {
+                                Button {
+                                    Task { await saveLibraryItemToPhotos(item) }
+                                } label: {
+                                    Label("写真へ", systemImage: "photo")
+                                }
+                                .tint(.blue)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("ライブラリ")
+            .alert("ファイルが見つかりません", isPresented: Binding(
+                get: { libraryAlertPath != nil },
+                set: { if !$0 { libraryAlertPath = nil } }
+            )) {
+                Button("OK", role: .cancel) { libraryAlertPath = nil }
+            } message: {
+                Text("保存場所を探しましたが見つかりませんでした。\n\(libraryAlertPath ?? "")")
+            }
+        }
+    }
+
+    // MARK: - 再生
+
+    private func play(item: LibraryItem) {
+        if let url = library.resolve(item) {
+            playing = PlayTarget(url: url)
+        } else {
+            libraryAlertPath = item.absolutePath
+        }
+    }
+
+    private func saveLibraryItemToPhotos(_ item: LibraryItem) async {
+        if let url = library.resolve(item) {
+            await savePhotos(url, audio: item.isAudio)
+        } else {
+            libraryAlertPath = item.absolutePath
+        }
+    }
+
+    // MARK: - 取得
 
     private func fetch() async {
         triedClients = []
@@ -221,6 +335,8 @@ struct ContentView: View {
         return out
     }
 
+    // MARK: - ダウンロード
+
     private func runDownload(_ opt: DownloadOption) async {
         guard let v = info else { return }
         isBusy = true
@@ -242,7 +358,6 @@ struct ContentView: View {
                 final = try await MediaTools.mux(video: first, audio: audioFile)
             }
             if opt.audioOnly, !opt.video.mimeType.contains("mp4") {
-                // webm音声はそのままでは写真に保存できないため共有のみ
                 status = "ダウンロード完了（webm音声のため共有から保存してください）"
             } else {
                 status = "ダウンロード完了"
@@ -253,7 +368,6 @@ struct ContentView: View {
         } catch {
             let msg = error.localizedDescription
             if msg.contains("403"), triedClients.count < Innertube.totalClients {
-                // 403はクライアント方式との相性が原因のことが多いので、別の方式で取り直す
                 status = "方式 \(v.clientName) では403でした。別の方式で取り直します…"
                 isError = false
                 isBusy = false
@@ -268,6 +382,8 @@ struct ContentView: View {
             }
         }
     }
+
+    // MARK: - 保存
 
     private func registerResult() {
         guard let current = resultFile else { return }
