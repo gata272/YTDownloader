@@ -25,6 +25,9 @@ struct ContentView: View {
     @State private var showLogin = false
     @State private var signedIn = false
     @State private var useCookies = false
+    @StateObject private var library = LibraryStore()
+    @State private var playingItem: LibraryItem? = nil
+    @State private var resultItem: LibraryItem? = nil
 
     private let downloader = DownloadManager()
 
@@ -105,7 +108,13 @@ struct ContentView: View {
                 }
 
                 if let resultFile {
-                    Section("保存") {
+                    Section("保存先") {
+                        if let resultItem {
+                            Button("アプリ内で再生") { playingItem = resultItem }
+                            Text("ライブラリに保存済み").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Button("アプリ内に保存（ライブラリ）") { registerResult() }
+                        }
                         if !resultIsAudio {
                             Button("写真アプリに保存") { Task { await savePhotos(resultFile, audio: false) } }
                         } else {
@@ -120,11 +129,34 @@ struct ContentView: View {
                     }
                 }
 
+                if !library.items.isEmpty {
+                    Section("ライブラリ") {
+                        ForEach(library.items) { item in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.title).lineLimit(2)
+                                Text("\(item.isAudio ? "音声" : "動画") / \(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file)) / \(item.savedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                HStack(spacing: 16) {
+                                    Button("再生") { playingItem = item }
+                                    Button("写真へ") { Task { await savePhotos(item.url, audio: item.isAudio) } }
+                                    ShareLink(item: item.url) { Text("共有") }
+                                    Spacer()
+                                    Button("削除", role: .destructive) { library.remove(item) }
+                                }
+                                .font(.footnote)
+                            }
+                        }
+                    }
+                }
+
                 if !status.isEmpty {
                     Section("状態") {
                         Text(status).font(.footnote).foregroundStyle(isError ? .red : .primary)
                     }
                 }
+            }
+            .sheet(item: $playingItem) { item in
+                PlayerView(url: item.url)
             }
             .navigationTitle("YTダウンローダ")
             .sheet(isPresented: $showLogin, onDismiss: {
@@ -150,6 +182,7 @@ struct ContentView: View {
         status = "取得中…"
         isError = false
         resultFile = nil
+        resultItem = nil
         defer { isBusy = false }
         do {
             let v = try await Innertube.fetchInfo(videoID: vid, excluding: triedClients, useCookies: useCookies)
@@ -231,6 +264,12 @@ struct ContentView: View {
                 isError = true
             }
         }
+    }
+
+    private func registerResult() {
+        guard let resultFile else { return }
+        resultItem = library.add(title: info?.title ?? "video", file: resultFile, isAudio: resultIsAudio)
+        savedNote = "ライブラリに保存しました"
     }
 
     private func savePhotos(_ file: URL, audio: Bool) async {
