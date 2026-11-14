@@ -11,7 +11,13 @@ struct YTFormat {
     let isMuxed: Bool
 
     var codecIsMP4Friendly: Bool {
-        mimeType.contains("avc1") || mimeType.contains("mp4")
+        // "video/mp4" でも中身が AV1/VP9 のものは iOS で再生・保存できないため、
+        // コーデック自体が avc1（H.264）のものだけを対象にする
+        mimeType.contains("avc1")
+    }
+
+    var audioIsMP4Friendly: Bool {
+        mimeType.contains("mp4a")
     }
 }
 

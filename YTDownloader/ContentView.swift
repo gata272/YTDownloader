@@ -209,11 +209,11 @@ struct ContentView: View {
                                       video: f, audio: nil, audioOnly: false))
         }
         if let bestV = v.videos.first(where: { $0.mimeType.contains("mp4") && $0.codecIsMP4Friendly }),
-           let bestA = v.audios.first(where: { $0.mimeType.contains("mp4") }) {
+           let bestA = v.audios.first(where: { $0.audioIsMP4Friendly }) {
             out.append(DownloadOption(label: "\(bestV.qualityLabel) 動画（高画質）", detail: "映像+音声を結合 / mp4",
                                       video: bestV, audio: bestA, audioOnly: false))
         }
-        if let a = v.audios.first {
+        if let a = v.audios.first(where: { $0.audioIsMP4Friendly }) ?? v.audios.first {
             let ext = a.mimeType.contains("mp4") ? "m4a" : "webm"
             out.append(DownloadOption(label: "音声のみ", detail: "\(ext) / \(a.bitrate / 1000)kbps",
                                       video: a, audio: nil, audioOnly: true))

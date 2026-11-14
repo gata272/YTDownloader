@@ -88,6 +88,16 @@ struct PlayerView: View {
                         .foregroundStyle(.gray)
                         .font(.caption2)
                         .multilineTextAlignment(.center)
+                    if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                       let size = (attrs[.size] as? NSNumber)?.int64Value {
+                        Text("容量: \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))")
+                            .foregroundStyle(.gray)
+                            .font(.caption2)
+                    } else {
+                        Text("容量: 取得できませんでした")
+                            .foregroundStyle(.gray)
+                            .font(.caption2)
+                    }
                 }
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
